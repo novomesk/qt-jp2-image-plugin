@@ -1,0 +1,33 @@
+version: 6.11.1.{build}
+image: Visual Studio 2022
+environment:
+  CC: cl.exe
+  CXX: cl.exe
+install:
+- cmd: >-
+    call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+
+    cd 3rdparty
+
+    mkdir build
+
+    mkdir download
+
+    mkdir install
+
+    cd build
+
+    cmake -G Ninja .. -DCMAKE_BUILD_TYPE=Release -DEXTERNALS_DOWNLOAD_DIR=C:/projects/qt-jp2-image-plugin/3rdparty/download -DINSTALL_ROOT=C:/projects/qt-jp2-image-plugin/3rdparty/install
+
+    ninja
+
+    cd ..\..
+build_script:
+- cmd: >-
+    C:\Qt\6.8.1\msvc2022_64\bin\qmake.exe qt-jp2-image-plugin.pro
+
+    nmake.exe
+
+artifacts:
+- path: kimg_jp2.dll
+- path: 3rdparty\install\bin\*.dll
