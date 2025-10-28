@@ -13,7 +13,7 @@ TEMPLATE = lib
 CONFIG += release skip_target_version_ext c++14 warn_on plugin
 CONFIG -= separate_debug_info debug debug_and_release force_debug_info
 
-win32:VERSION = 6.18.0
+win32:VERSION = 6.19.0
 QMAKE_TARGET_COMPANY = "Daniel Novomesky"
 QMAKE_TARGET_PRODUCT = "qt-jp2-image-plugin"
 QMAKE_TARGET_DESCRIPTION = "JPEG2000 plug-in for Qt6 applications"
