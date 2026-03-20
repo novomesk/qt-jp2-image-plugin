@@ -1,4 +1,4 @@
-version: 6.19.0.{build}
+version: 6.25.0.{build}
 image: Visual Studio 2022
 environment:
   CC: cl.exe
@@ -24,7 +24,7 @@ install:
     cd ..\..
 build_script:
 - cmd: >-
-    C:\Qt\6.9.2\msvc2022_64\bin\qmake.exe qt-jp2-image-plugin.pro
+    C:\Qt\6.9.3\msvc2022_64\bin\qmake.exe qt-jp2-image-plugin.pro
 
     nmake.exe
 
