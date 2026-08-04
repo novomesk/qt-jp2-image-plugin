@@ -1,4 +1,4 @@
-version: 6.25.0.{build}
+version: 6.28.1.{build}
 image: Visual Studio 2022
 environment:
   CC: cl.exe
