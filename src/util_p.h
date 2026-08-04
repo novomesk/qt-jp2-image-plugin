@@ -12,10 +12,26 @@
 
 #include <QImage>
 #include <QImageIOHandler>
+#include <QImageReader>
+#include <QIODevice>
+#include <QPixelFormat>
+
+// Default maximum number of channels (do not exceed 256).
+#ifndef KIF_MAX_IMAGE_CHANNELS
+#define KIF_MAX_IMAGE_CHANNELS 60
+#endif
 
 // Default maximum width and height for the large image plugins.
 #ifndef KIF_LARGE_IMAGE_PIXEL_LIMIT
 #define KIF_LARGE_IMAGE_PIXEL_LIMIT 300000
+#endif
+
+// Maximum size for legacy image formats.
+#define KIF_64K_IMAGE_PIXEL_LIMIT 65536
+
+#if KIF_LARGE_IMAGE_PIXEL_LIMIT < KIF_64K_IMAGE_PIXEL_LIMIT
+#undef KIF_LARGE_IMAGE_PIXEL_LIMIT
+#define KIF_LARGE_IMAGE_PIXEL_LIMIT KIF_64K_IMAGE_PIXEL_LIMIT
 #endif
 
 // Image metadata keys to use in plugins (so they are consistent)
@@ -28,14 +44,28 @@
 #define META_KEY_DIRECTION "Direction"
 #define META_KEY_DOCUMENTNAME "DocumentName"
 #define META_KEY_HOSTCOMPUTER "HostComputer"
+#define META_KEY_KEYWORDS "Keywords"
 #define META_KEY_LATITUDE "Latitude"
 #define META_KEY_LONGITUDE "Longitude"
 #define META_KEY_MODIFICATIONDATE "ModificationDate"
 #define META_KEY_OWNER "Owner"
+#define META_KEY_RATING "Rating"
 #define META_KEY_SOFTWARE "Software"
+#define META_KEY_SPEED "Speed"
 #define META_KEY_TITLE "Title"
 #define META_KEY_XML_GIMP "XML:org.gimp.xml"
 #define META_KEY_XMP_ADOBE "XML:com.adobe.xmp"
+
+// Shot info metadata keys
+#define META_KEY_DIGITALZOOMRATIO "DigitalZoomRatio"
+#define META_KEY_EXPOSUREMODE "ExposureMode"
+#define META_KEY_EXPOSUREPROGRAM "ExposureProgram"
+#define META_KEY_EXPOSURETIME "ExposureTime"
+#define META_KEY_FLASH "Flash"
+#define META_KEY_FNUMBER "FNumber"
+#define META_KEY_FOCALLENGTH "FocalLength"
+#define META_KEY_ISOSPEEDRATINGS "ISOSpeedRatings"
+#define META_KEY_WHITEBALANCE "WhiteBalance"
 
 // Camera info metadata keys
 #define META_KEY_MANUFACTURER "Manufacturer"
@@ -50,20 +80,89 @@
 // QList uses some extra space for stuff, hence the 32 here suggested by Thiago Macieira
 static constexpr int kMaxQVectorSize = std::numeric_limits<int>::max() - 32;
 
-// On Qt 6 to make the plugins fail to allocate if the image size is greater than QImageReader::allocationLimit()
-// it is necessary to allocate the image with QImageIOHandler::allocateImage().
-inline QImage imageAlloc(const QSize &size, const QImage::Format &format)
+/*!
+ * \brief The ImageInitToZero enum
+ */
+enum class ImageInitToZero
+{
+    None, /**< Do not initialize the image. */
+    All, /**< Initialize all images. */
+    PremulOnly, /**< Initialize only images with premultiplied alpha. */
+    FPOnly, /**< Initialize only images with floating point format. */
+    FPAndPremul /**< Initialize floating point and premultiplied formats. */
+};
+
+/*!
+ * \brief imageAlloc
+ * Helper function to initialize framework images.
+ * \param size The image size.
+ * \param format The image format.
+ * \param init Whether and which images should be initialized to zero.
+ * \return The allocated image or a null image on error.
+ */
+inline QImage imageAlloc(const QSize &size, const QImage::Format &format, const ImageInitToZero& init = ImageInitToZero::None)
 {
     QImage img;
     if (!QImageIOHandler::allocateImage(size, format, &img)) {
         img = QImage(); // paranoia
     }
+    if (init != ImageInitToZero::None && !img.isNull()) {
+        auto pixelFormat = img.pixelFormat();
+        auto isFloat = pixelFormat.typeInterpretation() == QPixelFormat::FloatingPoint;
+        auto isPremul = pixelFormat.premultiplied();
+        if (init == ImageInitToZero::All) {
+            img.fill(Qt::black);
+        } else if (isFloat && (init == ImageInitToZero::FPOnly || init == ImageInitToZero::FPAndPremul)) {
+            img.fill(Qt::black);
+        } else if (isPremul && (init == ImageInitToZero::PremulOnly || init == ImageInitToZero::FPAndPremul)) {
+            img.fill(Qt::black);
+        }
+    }
     return img;
 }
 
-inline QImage imageAlloc(qint32 width, qint32 height, const QImage::Format &format)
+/*!
+ * \brief imageAlloc
+ * Helper function to initialize framework images.
+ * \param width The image width.
+ * \param height The image height.
+ * \param format The image format.
+ * \param init Whether and which images should be initialized to zero.
+ * \return The allocated image or a null image on error.
+ */
+inline QImage imageAlloc(qint32 width, qint32 height, const QImage::Format &format, const ImageInitToZero& init = ImageInitToZero::None)
 {
-    return imageAlloc(QSize(width, height), format);
+    return imageAlloc(QSize(width, height), format, init);
+}
+
+/*!
+ * \brief checkImageSize
+ * Helper function to make sure the image size does not exceed the limit set in Qt.
+ * \param width The image width.
+ * \param height The image height.
+ * \param bytesPerPixel The number of bytes for each pixel of the image.
+ * \return True if the limit is respected, false otherwise.
+ */
+inline bool checkImageSize(qint32 width, qint32 height, qint32 bytesPerPixel)
+{
+    size_t maxBytes = size_t(QImageReader::allocationLimit()) * 1024 * 1024;
+    if (maxBytes == 0) {
+        return true;
+    }
+    size_t bytes = size_t(width) * height * bytesPerPixel;
+    return bytes <= maxBytes;
+}
+
+/*!
+ * \brief checkImageSize
+ * Helper function to make sure the image size does not exceed the limit set in Qt.
+ * \param size The image size.
+ * \param bytesPerPixel The number of bytes for each pixel of the image.
+ * \return True if the limit is respected, false otherwise.
+ */
+inline bool checkImageSize(const QSize& size, qint32 bytesPerPixel)
+{
+    return checkImageSize(size.width(), size.height(), bytesPerPixel);
 }
 
 template<class TI, class SF> // SF = source FP, TI = target INT
@@ -130,6 +229,50 @@ inline double dppm2dpi(qint32 ppm, bool *ok = nullptr)
 inline float fppm2dpi(qint32 ppm, bool *ok = nullptr)
 {
     return ppm2dpi_T<float>(ppm, ok);
+}
+
+/*!
+ * \brief deviceRead
+ * A function for reading from devices.
+ *
+ * Similar to QIODevice::read(qint64) but limits the initial memory allocation. Useful for reading corrupted streams.
+ * \param d The device.
+ * \param maxSize The maximum size to read.
+ * \return The byte array read.
+ */
+static QByteArray deviceRead(QIODevice *d, qint64 maxSize)
+{
+    if (d == nullptr) {
+        return{};
+    }
+
+    const qint64 blockSize = 1024 * 1024;
+    auto devSize = d->isSequential() ? qint64() : d->size();
+
+    if (devSize > 0) {
+        // random access device
+        maxSize = std::min(maxSize, devSize - d->pos());
+        return d->read(maxSize);
+    } else if (maxSize < blockSize) {
+        // small read
+        return d->read(maxSize);
+    }
+
+    // sequential device
+    QByteArray ba;
+    while (ba.size() < maxSize) {
+        auto toRead = std::min(blockSize, maxSize - ba.size());
+        if (toRead + ba.size() > QByteArray::maxSize()) {
+            break;
+        }
+        auto tmp = d->read(toRead);
+        if (tmp.isEmpty()) {
+            break;
+        }
+        ba.append(tmp);
+    }
+
+    return ba;
 }
 
 #endif // UTIL_P_H
